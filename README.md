@@ -1,0 +1,1 @@
+Multiparty dialogue support system with VAD → ASR → LLM → TTS and smart handoff between AI bot and human agent.
