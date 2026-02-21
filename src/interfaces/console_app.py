@@ -13,6 +13,7 @@ from typing import Optional
 
 from src.dialogue.state import Session, SpeakerRole
 from src.dialogue.llm_client import generate_bot_reply
+from src.rag.simple_faq_rag import get_rag_context
 
 
 PROMPT_CUSTOMER = "Customer> "
@@ -36,84 +37,86 @@ def main(session_id: Optional[str] = None) -> None:
     session = Session(session_id=session_id)
 
     print(f"Starting session {session.session_id} (active_role={session.active_role.name})")
-    _print_instructions()
+    print("--- Support Assistant Console Demo ---")
+    print("Type customer text and press Enter.")
+    print("Commands:")
+    print("  /human  -> escalate to human agent")
+    print("  /bot    -> hand back to bot")
+    print("  /quit   -> exit")
+    print("--------------------------------------")
+
+    system_prompt = (
+        "You are a polite, concise customer support assistant in a call center. "
+        "Answer briefly and clearly."
+    )
 
     try:
         while True:
             try:
-                text = input(PROMPT_CUSTOMER).strip()
+                raw = input(PROMPT_CUSTOMER).strip()
             except EOFError:
                 print("\nEOF received — exiting.")
                 break
 
-            if not text:
+            if not raw:
                 continue
 
-            # global commands
-            if text == "/quit":
-                print("Quitting...")
+            # 1) Handle commands BEFORE calling the LLM
+            if raw == "/human":
+                session.active_role = SpeakerRole.HUMAN_AGENT
+                print("System> Connecting you to a human agent (ringing...)")
+                print("System> Human agent joined the conversation.")
+                continue
+
+            if raw == "/bot":
+                session.active_role = SpeakerRole.BOT
+                print("System> Handing the conversation back to the bot.")
+                continue
+
+            if raw == "/quit":
+                print("System> Goodbye.")
                 break
-            if text == "/human":
-                session.mark_escalated()
-                print("System> Escalating to HUMAN_AGENT...")
-                continue
-            if text == "/bot":
-                session.hand_back_to_bot()
-                print("System> Handing conversation back to BOT...")
-                continue
 
-            # regular customer input -> record it
-            session.add_turn(SpeakerRole.CUSTOMER, text)
+            # 2) Normal customer message
+            customer_text = raw
+            session.add_turn(SpeakerRole.CUSTOMER, customer_text)
 
-            # responder behavior depends on active_role
             if session.active_role == SpeakerRole.BOT:
-                # build history from session turns
+                # Build history for the LLM
                 history: list[dict] = []
-                for t in session.turns:
-                    if t.speaker == SpeakerRole.CUSTOMER:
-                        history.append({"role": "user", "content": t.text})
+                for turn in session.turns:
+                    if turn.speaker == SpeakerRole.CUSTOMER:
+                        history.append({"role": "user", "content": turn.text})
                     else:
-                        # BOT and HUMAN_AGENT are treated as assistant messages
-                        history.append({"role": "assistant", "content": t.text})
+                        history.append({"role": "assistant", "content": turn.text})
 
-                system_prompt = (
-                    "You are a support assistant in a customer service call center. "
-                    "Answer briefly and politely."
-                )
+                # Retrieve short RAG context and augment the user message
+                rag_context = get_rag_context(customer_text)
+                augmented_user_message = f"""
+                Docs context:
+
+                {rag_context}
+
+                Customer question:
+                {customer_text}
+                """.strip()
 
                 reply_text = generate_bot_reply(
                     model="phi3",
                     system_prompt=system_prompt,
                     history=history,
-                    user_message=text,
+                    user_message=augmented_user_message,
                 )
-
                 print(f"BOT> {reply_text}")
                 session.add_turn(SpeakerRole.BOT, reply_text)
 
             elif session.active_role == SpeakerRole.HUMAN_AGENT:
-                # ask for manual human reply
-                try:
-                    human_reply = input(PROMPT_HUMAN).strip()
-                except EOFError:
-                    print("\nEOF received from human — returning to loop.")
-                    continue
-
-                # allow human to issue quick control commands while replying
-                if human_reply == "/bot":
-                    session.hand_back_to_bot()
-                    print("[SYSTEM] Handed back to BOT. Active role=BOT")
-                    continue
-                if human_reply == "/quit":
-                    print("Quitting...")
-                    break
-
-                session.add_turn(SpeakerRole.HUMAN_AGENT, human_reply)
-                print(f"HUMAN_AGENT> {human_reply}")
+                human_text = input(PROMPT_HUMAN).strip()
+                session.add_turn(SpeakerRole.HUMAN_AGENT, human_text)
+                print(f"HUMAN_AGENT> {human_text}")
 
             else:
-                # unexpected active role (e.g., CUSTOMER) — just report it
-                print(f"[SYSTEM] No responder configured for active role: {session.active_role}")
+                print(f"System> No responder configured for active role: {session.active_role}")
 
     except KeyboardInterrupt:
         print("\nKeyboard interrupt — exiting.")

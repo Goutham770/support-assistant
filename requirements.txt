@@ -1,6 +1,23 @@
-numpy
-pydantic
-fastapi
-uvicorn
-python-dotenv
-ollama
+# Core dependencies for RAG + Ollama support assistant
+
+# RAG pipeline and embeddings
+sentence-transformers>=2.2.0
+
+# HTTP client for Ollama API
+requests>=2.31.0
+
+# Ollama Python SDK (legacy, kept for compatibility)
+ollama>=0.0.11
+
+# Optional: Audio/microphone support
+sounddevice>=0.4.6
+numpy>=1.24.0
+
+# Optional: Whisper ASR (OpenAI client)
+openai>=1.0.0
+
+# Optional but recommended: Pydub for audio processing
+pydub>=0.25.1
+
+# Environment variable management
+python-dotenv>=1.0.0
